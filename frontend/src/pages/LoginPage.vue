@@ -1,22 +1,22 @@
 <template>
   <main class="login-shell">
     <form class="login-panel" @submit.prevent="submit">
-      <h1>PKY Cloud H5</h1>
-      <p>Greenhouse irrigation control</p>
+      <h1>PKY Cloud CN</h1>
+      <p>农业灌溉云平台 V0.2</p>
 
       <label>
-        Username
+        账号
         <input v-model="username" autocomplete="username" required />
       </label>
 
       <label>
-        Password
+        密码
         <input v-model="password" type="password" autocomplete="current-password" required />
       </label>
 
-      <button :disabled="loading">{{ loading ? 'Signing in...' : 'Login' }}</button>
+      <button :disabled="loading">{{ loading ? '登录中...' : '登录' }}</button>
       <small v-if="error" class="error">{{ error }}</small>
-      <small class="hint">Default: admin / admin123</small>
+      <small class="hint">默认账号：admin / admin123</small>
     </form>
   </main>
 </template>

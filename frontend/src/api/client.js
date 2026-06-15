@@ -29,12 +29,12 @@ export async function api(path, options = {}) {
   if (response.status === 401 && path !== '/login') {
     clearToken();
     window.location.href = '/login';
-    throw new Error('Unauthorized');
+    throw new Error('未登录或登录已过期');
   }
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.message || 'Request failed');
+    throw new Error(data.message || '请求失败');
   }
 
   return data;
