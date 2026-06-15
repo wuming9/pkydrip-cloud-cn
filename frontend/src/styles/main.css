@@ -1,0 +1,266 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f4f7f6;
+  color: #17211e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 16px;
+  background: #147a5c;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: #e3ece8;
+  color: #17211e;
+}
+
+input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #cbd8d3;
+  border-radius: 6px;
+  padding: 0 12px;
+  font: inherit;
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(135deg, #eef6f1, #dfeeea);
+}
+
+.login-panel {
+  width: min(100%, 380px);
+  display: grid;
+  gap: 16px;
+  background: white;
+  border: 1px solid #d9e4df;
+  border-radius: 8px;
+  padding: 28px;
+  box-shadow: 0 20px 60px rgba(32, 61, 51, 0.12);
+}
+
+.login-panel h1,
+.topbar h1 {
+  margin: 0;
+}
+
+.login-panel p,
+.topbar p,
+.device-card p {
+  margin: 4px 0 0;
+  color: #62746e;
+}
+
+.login-panel label {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.app-shell {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.topbar nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.back-link {
+  display: inline-block;
+  margin-bottom: 8px;
+  color: #147a5c;
+  font-weight: 700;
+}
+
+.device-grid,
+.dashboard-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.device-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.dashboard-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.device-card,
+.panel {
+  background: white;
+  border: 1px solid #d9e4df;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.device-card h2,
+.panel h2 {
+  margin: 0 0 16px;
+  font-size: 20px;
+}
+
+.row,
+.control-row,
+.plain-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status {
+  flex: none;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.online {
+  background: #dff6ea;
+  color: #137448;
+}
+
+.offline {
+  background: #eef1f0;
+  color: #6b7773;
+}
+
+.metrics,
+.metric-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  color: #33433e;
+}
+
+.metric-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric {
+  border: 1px solid #edf2f0;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.metric span,
+.plain-list small {
+  display: block;
+  color: #62746e;
+  font-size: 13px;
+}
+
+.metric strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 22px;
+}
+
+.control-row + .control-row {
+  margin-top: 12px;
+}
+
+.plan-form {
+  display: grid;
+  grid-template-columns: 1.4fr 120px 120px auto;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.plain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.plain-list li {
+  min-height: 44px;
+  border-top: 1px solid #edf2f0;
+  padding-top: 10px;
+}
+
+.logs li {
+  align-items: start;
+}
+
+.error {
+  color: #b42318;
+}
+
+.hint {
+  color: #62746e;
+}
+
+.empty-state {
+  min-height: 220px;
+  display: grid;
+  align-content: center;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 16px;
+  }
+
+  .topbar,
+  .row,
+  .control-row,
+  .plain-list li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-grid,
+  .metric-grid,
+  .plan-form {
+    grid-template-columns: 1fr;
+  }
+}

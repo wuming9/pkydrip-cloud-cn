@@ -1,0 +1,47 @@
+services:
+  emqx:
+    image: emqx/emqx:5.8
+    container_name: pky-emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "18083:18083"
+    environment:
+      EMQX_DASHBOARD__DEFAULT_USERNAME: admin
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: public
+    volumes:
+      - emqx-data:/opt/emqx/data
+      - emqx-log:/opt/emqx/log
+
+  backend:
+    build:
+      context: ./backend
+    container_name: pky-backend
+    restart: unless-stopped
+    depends_on:
+      - emqx
+    env_file:
+      - .env
+    environment:
+      API_PORT: 3000
+      SQLITE_PATH: /app/data/pky-cloud.db
+      MQTT_URL: mqtt://emqx:1883
+    volumes:
+      - ./backend/data:/app/data
+    ports:
+      - "3000:3000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: pky-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  emqx-data:
+  emqx-log:
