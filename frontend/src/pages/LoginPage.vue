@@ -2,7 +2,7 @@
   <main class="login-shell">
     <form class="login-panel" @submit.prevent="submit">
       <h1>PKY Cloud CN</h1>
-      <p>农业灌溉云平台 V0.2</p>
+      <p>V0.3 真实设备联调版</p>
 
       <label>
         账号

@@ -13,8 +13,12 @@ CREATE TABLE IF NOT EXISTS devices (
   location TEXT,
   online INTEGER NOT NULL DEFAULT 0,
   firmware_version TEXT,
-  current_mode TEXT NOT NULL DEFAULT '自动模式',
-  current_strategy TEXT NOT NULL DEFAULT '番茄开花期策略',
+  current_mode TEXT NOT NULL DEFAULT 'MANUAL',
+  current_strategy TEXT NOT NULL DEFAULT '',
+  work_status TEXT NOT NULL DEFAULT 'IDLE',
+  alarm_code INTEGER NOT NULL DEFAULT 0,
+  last_cmd_json TEXT,
+  last_ack_json TEXT,
   last_seen_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -22,13 +26,41 @@ CREATE TABLE IF NOT EXISTS devices (
 CREATE TABLE IF NOT EXISTS device_state (
   device_id TEXT PRIMARY KEY,
   pump_on INTEGER NOT NULL DEFAULT 0,
+  pump1 INTEGER NOT NULL DEFAULT 0,
+  pump2 INTEGER NOT NULL DEFAULT 0,
   valve_on INTEGER NOT NULL DEFAULT 0,
   valves_json TEXT NOT NULL DEFAULT '[]',
+  valves_state_json TEXT NOT NULL DEFAULT '[]',
   flow REAL NOT NULL DEFAULT 0,
   pressure REAL NOT NULL DEFAULT 0,
   ec REAL NOT NULL DEFAULT 0,
   ph REAL NOT NULL DEFAULT 0,
   raw_payload TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS timer_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  pump INTEGER NOT NULL DEFAULT 1,
+  valves_json TEXT NOT NULL DEFAULT '[]',
+  duration_minutes INTEGER NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS device_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  groups_json TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
 );
@@ -109,13 +141,23 @@ INSERT OR IGNORE INTO users (username, password)
 VALUES ('admin', 'admin123');
 
 INSERT OR IGNORE INTO devices
-  (id, name, location, online, firmware_version, current_mode, current_strategy, last_seen_at)
+  (id, name, location, online, firmware_version, current_mode, current_strategy, work_status, alarm_code, last_seen_at)
 VALUES
-  ('demo-001', '灌溉控制器001', '番茄温室A区', 1, 'PKY-FW-1.0.0', '自动模式', '番茄开花期策略', datetime('now')),
-  ('demo-002', '灌溉控制器002', '育苗温室B区', 1, 'PKY-FW-1.0.0', '自动模式', '育苗期策略', datetime('now'));
+  ('demo-001', '灌溉控制器001', '温室A区', 1, 'PKY-FW-1.0.0', 'MANUAL', '', 'IDLE', 0, datetime('now')),
+  ('demo-002', '灌溉控制器002', '温室B区', 0, 'PKY-FW-1.0.0', 'MANUAL', '', 'IDLE', 0, datetime('now'));
 
 INSERT OR IGNORE INTO device_state (device_id)
 VALUES ('demo-001'), ('demo-002');
+
+INSERT OR IGNORE INTO timer_tasks
+  (id, device_id, name, start_time, pump, valves_json, duration_minutes, enabled)
+VALUES
+  (1, 'demo-001', 'Morning irrigation', '08:00', 1, '[1,2,3]', 10, 1);
+
+INSERT OR IGNORE INTO device_plans
+  (id, device_id, name, groups_json, enabled)
+VALUES
+  (1, 'demo-001', 'Greenhouse Plan', '[{"groupName":"Group A","pump":1,"valves":[1,3,5,6],"durationMinutes":10},{"groupName":"Group B","pump":1,"valves":[9,10,23,24,25,26],"durationMinutes":8}]', 1);
 
 INSERT OR IGNORE INTO crops (id, name, variety, planting_date, area, remark)
 VALUES (1, '番茄', '普罗旺斯', '2026-03-18', '12亩', 'A区主栽作物');

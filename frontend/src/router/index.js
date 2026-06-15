@@ -4,9 +4,6 @@ import AppShell from '../pages/AppShell.vue';
 import LoginPage from '../pages/LoginPage.vue';
 import DeviceDashboardPage from '../pages/DeviceDashboardPage.vue';
 import DeviceListPage from '../pages/DeviceListPage.vue';
-import CropManagementPage from '../pages/CropManagementPage.vue';
-import GrowthStagesPage from '../pages/GrowthStagesPage.vue';
-import IrrigationStrategiesPage from '../pages/IrrigationStrategiesPage.vue';
 
 const routes = [
   { path: '/login', component: LoginPage },
@@ -16,10 +13,7 @@ const routes = [
     redirect: '/console/demo-001',
     children: [
       { path: 'console/:deviceId', component: DeviceDashboardPage },
-      { path: 'devices', component: DeviceListPage },
-      { path: 'crops', component: CropManagementPage },
-      { path: 'growth-stages', component: GrowthStagesPage },
-      { path: 'strategies', component: IrrigationStrategiesPage }
+      { path: 'devices', component: DeviceListPage }
     ]
   }
 ];
@@ -34,7 +28,7 @@ router.beforeEach((to) => {
     return '/login';
   }
   if (to.path === '/login' && getToken()) {
-    return '/devices';
+    return '/console/demo-001';
   }
   return true;
 });

@@ -4,11 +4,10 @@ import jwt from 'jsonwebtoken';
 import morgan from 'morgan';
 import { config } from './config.js';
 import { db, migrate, rowToDevice } from './db.js';
-import { publishCommand, startMqtt } from './mqttService.js';
+import { getMqttDebug, publishCommand, startMqtt } from './mqttService.js';
 
 migrate();
 startMqtt();
-startPlanScheduler();
 startOnlineWatcher();
 
 const app = express();
@@ -36,7 +35,7 @@ function authRequired(req, res, next) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, service: 'PKY Cloud CN V0.2' });
+  res.json({ ok: true, service: 'PKY Cloud CN V0.3' });
 });
 
 app.post('/api/login', (req, res) => {
@@ -78,185 +77,170 @@ app.get('/api/console/:deviceId', authRequired, (req, res) => {
 
   res.json({
     device,
-    todayStats: getTodayStats(req.params.deviceId),
-    plans: getPlans(req.params.deviceId),
-    logs: getLogs(req.params.deviceId)
+    timerTasks: getTimerTasks(req.params.deviceId),
+    plans: getDevicePlans(req.params.deviceId),
+    logs: getLogs(req.params.deviceId),
+    debug: getMqttDebug(req.params.deviceId)
   });
+});
+
+app.post('/api/devices/:deviceId/pumps/:pumpNumber', authRequired, (req, res) => {
+  const pump = Number(req.params.pumpNumber);
+  if (![1, 2].includes(pump)) {
+    res.status(400).json({ message: '水泵编号必须是 1 或 2' });
+    return;
+  }
+
+  const value = Boolean(req.body.value ?? req.body.on) ? 1 : 0;
+  const command = { cmd: 'PUMP_SET', pump, value };
+  const result = publishCommand(req.params.deviceId, command, `Pump${pump} ${value ? 'ON' : 'OFF'}`);
+  res.json({ ok: true, ...result });
 });
 
 app.post('/api/devices/:deviceId/pump', authRequired, (req, res) => {
-  const on = Boolean(req.body.on);
-  publishCommand(req.params.deviceId, {
-    type: 'pump_control',
-    label: on ? '水泵启动' : '水泵停止',
-    pumpOn: on
-  });
-  res.json({ ok: true, command: { pumpOn: on } });
+  const pump = Number(req.body.pump || 1);
+  const value = Boolean(req.body.value ?? req.body.on) ? 1 : 0;
+  const command = { cmd: 'PUMP_SET', pump, value };
+  const result = publishCommand(req.params.deviceId, command, `Pump${pump} ${value ? 'ON' : 'OFF'}`);
+  res.json({ ok: true, ...result });
 });
 
 app.post('/api/devices/:deviceId/valves/:valveNumber', authRequired, (req, res) => {
-  const valveNumber = Number(req.params.valveNumber);
-  if (valveNumber < 1 || valveNumber > 32) {
+  const valve = Number(req.params.valveNumber);
+  if (valve < 1 || valve > 32) {
     res.status(400).json({ message: '阀门编号必须在 1-32 之间' });
     return;
   }
 
-  const on = Boolean(req.body.on);
-  publishCommand(req.params.deviceId, {
-    type: 'valve_control',
-    label: `阀门${valveNumber}${on ? '开启' : '关闭'}`,
-    valveNo: valveNumber,
-    valveOn: on
-  });
-  res.json({ ok: true, command: { valveNo: valveNumber, valveOn: on } });
+  const value = Boolean(req.body.value ?? req.body.on) ? 1 : 0;
+  const command = { cmd: 'VALVE_SET', valve, value };
+  const result = publishCommand(req.params.deviceId, command, `Valve${valve} ${value ? 'ON' : 'OFF'}`);
+  res.json({ ok: true, ...result });
 });
 
-app.post('/api/devices/:deviceId/valve', authRequired, (req, res) => {
-  const on = Boolean(req.body.on);
-  const valveNumber = Number(req.body.valveNo || req.body.valveNumber || 1);
-  publishCommand(req.params.deviceId, {
-    type: 'valve_control',
-    label: `阀门${valveNumber}${on ? '开启' : '关闭'}`,
-    valveNo: valveNumber,
-    valveOn: on
-  });
-  res.json({ ok: true, command: { valveNo: valveNumber, valveOn: on } });
+app.post('/api/devices/:deviceId/emergency-stop', authRequired, (req, res) => {
+  const command = { cmd: 'EMERGENCY_STOP' };
+  const result = publishCommand(req.params.deviceId, command, 'Emergency Stop');
+  res.json({ ok: true, ...result });
 });
 
-app.get('/api/devices/:deviceId/plans', authRequired, (req, res) => {
-  res.json(getPlans(req.params.deviceId));
+app.post('/api/devices/:deviceId/mode', authRequired, (req, res) => {
+  const mode = String(req.body.mode || '').toUpperCase();
+  const modes = ['MANUAL', 'TIMER', 'PLAN', 'AUTO', 'REMOTE'];
+  if (!modes.includes(mode)) {
+    res.status(400).json({ message: '模式必须是 MANUAL、TIMER、PLAN、AUTO、REMOTE' });
+    return;
+  }
+
+  const command = { cmd: 'MODE_SET', mode };
+  const result = publishCommand(req.params.deviceId, command, `模式切换 ${mode}`);
+  db.prepare('UPDATE devices SET current_mode = ? WHERE id = ?').run(mode, req.params.deviceId);
+  res.json({ ok: true, ...result });
 });
 
-app.post('/api/devices/:deviceId/plans', authRequired, (req, res) => {
-  const { name, startTime, durationMinutes, enabled = true } = req.body;
+app.get('/api/devices/:deviceId/timer-tasks', authRequired, (req, res) => {
+  res.json(getTimerTasks(req.params.deviceId));
+});
 
-  if (!name || !startTime || !Number(durationMinutes)) {
+app.post('/api/devices/:deviceId/timer-tasks', authRequired, (req, res) => {
+  const task = normalizeTimerTask(req.body);
+  if (!task.name || !task.startTime || !task.durationMinutes) {
     res.status(400).json({ message: '请填写名称、开始时间和运行时长' });
     return;
   }
 
   const result = db
     .prepare(
-      `INSERT INTO irrigation_plans
-       (device_id, name, enabled, start_time, duration_minutes, valve_on, pump_on)
-       VALUES (?, ?, ?, ?, ?, 1, 1)`
+      `INSERT INTO timer_tasks
+       (device_id, name, start_time, pump, valves_json, duration_minutes, enabled)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(req.params.deviceId, name, enabled ? 1 : 0, startTime, Number(durationMinutes));
+    .run(
+      req.params.deviceId,
+      task.name,
+      task.startTime,
+      task.pump,
+      JSON.stringify(task.valves),
+      task.durationMinutes,
+      task.enabled ? 1 : 0
+    );
 
-  addLog(req.params.deviceId, '新增灌溉计划', JSON.stringify(req.body), '成功', '平台');
+  addLog(req.params.deviceId, 'Timer创建', JSON.stringify(task), '成功', 'web');
   res.status(201).json({ id: result.lastInsertRowid });
 });
 
-app.delete('/api/plans/:planId', authRequired, (req, res) => {
-  const plan = db.prepare('SELECT * FROM irrigation_plans WHERE id = ?').get(req.params.planId);
-  if (!plan) {
-    res.status(404).json({ message: '计划不存在' });
+app.post('/api/timer-tasks/:taskId/send', authRequired, (req, res) => {
+  const row = db.prepare('SELECT * FROM timer_tasks WHERE id = ?').get(req.params.taskId);
+  if (!row) {
+    res.status(404).json({ message: 'Timer Task 不存在' });
     return;
   }
 
-  db.prepare('DELETE FROM irrigation_plans WHERE id = ?').run(req.params.planId);
-  addLog(plan.device_id, '删除灌溉计划', JSON.stringify({ planId: req.params.planId }), '成功', '平台');
+  const task = mapTimerTask(row);
+  const command = { cmd: 'TIMER_TASK_SET', task };
+  const result = publishCommand(row.device_id, command, 'Timer下发');
+  res.json({ ok: true, ...result });
+});
+
+app.delete('/api/timer-tasks/:taskId', authRequired, (req, res) => {
+  const row = db.prepare('SELECT * FROM timer_tasks WHERE id = ?').get(req.params.taskId);
+  if (!row) {
+    res.status(404).json({ message: 'Timer Task 不存在' });
+    return;
+  }
+  db.prepare('DELETE FROM timer_tasks WHERE id = ?').run(req.params.taskId);
+  addLog(row.device_id, 'Timer删除', JSON.stringify({ taskId: req.params.taskId }), '成功', 'web');
+  res.json({ ok: true });
+});
+
+app.get('/api/devices/:deviceId/device-plans', authRequired, (req, res) => {
+  res.json(getDevicePlans(req.params.deviceId));
+});
+
+app.post('/api/devices/:deviceId/device-plans', authRequired, (req, res) => {
+  const plan = normalizePlan(req.body);
+  if (!plan.name || !plan.groups.length) {
+    res.status(400).json({ message: '请填写计划名称和至少一个灌溉组' });
+    return;
+  }
+
+  const result = db
+    .prepare(
+      `INSERT INTO device_plans (device_id, name, groups_json, enabled)
+       VALUES (?, ?, ?, ?)`
+    )
+    .run(req.params.deviceId, plan.name, JSON.stringify(plan.groups), plan.enabled ? 1 : 0);
+
+  addLog(req.params.deviceId, 'Plan创建', JSON.stringify(plan), '成功', 'web');
+  res.status(201).json({ id: result.lastInsertRowid });
+});
+
+app.post('/api/device-plans/:planId/send', authRequired, (req, res) => {
+  const row = db.prepare('SELECT * FROM device_plans WHERE id = ?').get(req.params.planId);
+  if (!row) {
+    res.status(404).json({ message: 'Plan 不存在' });
+    return;
+  }
+
+  const plan = mapDevicePlan(row);
+  const command = { cmd: 'PLAN_SET', plan };
+  const result = publishCommand(row.device_id, command, 'Plan下发');
+  res.json({ ok: true, ...result });
+});
+
+app.delete('/api/device-plans/:planId', authRequired, (req, res) => {
+  const row = db.prepare('SELECT * FROM device_plans WHERE id = ?').get(req.params.planId);
+  if (!row) {
+    res.status(404).json({ message: 'Plan 不存在' });
+    return;
+  }
+  db.prepare('DELETE FROM device_plans WHERE id = ?').run(req.params.planId);
+  addLog(row.device_id, 'Plan删除', JSON.stringify({ planId: req.params.planId }), '成功', 'web');
   res.json({ ok: true });
 });
 
 app.get('/api/logs', authRequired, (req, res) => {
   res.json(getLogs(req.query.deviceId));
-});
-
-app.get('/api/crops', authRequired, (req, res) => {
-  res.json(db.prepare('SELECT * FROM crops ORDER BY created_at DESC').all());
-});
-
-app.post('/api/crops', authRequired, (req, res) => {
-  const { name, variety = '', plantingDate = '', area = '', remark = '' } = req.body;
-  if (!name) {
-    res.status(400).json({ message: '请填写作物名称' });
-    return;
-  }
-
-  const result = db
-    .prepare(
-      `INSERT INTO crops (name, variety, planting_date, area, remark)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    .run(name, variety, plantingDate, area, remark);
-
-  res.status(201).json({ id: result.lastInsertRowid });
-});
-
-app.delete('/api/crops/:cropId', authRequired, (req, res) => {
-  db.prepare('DELETE FROM crops WHERE id = ?').run(req.params.cropId);
-  res.json({ ok: true });
-});
-
-app.get('/api/growth-stages', authRequired, (req, res) => {
-  res.json(db.prepare('SELECT * FROM growth_stages ORDER BY sort_order ASC, id ASC').all());
-});
-
-app.post('/api/growth-stages', authRequired, (req, res) => {
-  const { name } = req.body;
-  if (!name) {
-    res.status(400).json({ message: '请填写阶段名称' });
-    return;
-  }
-
-  const maxSort = db.prepare('SELECT COALESCE(MAX(sort_order), 0) AS value FROM growth_stages').get();
-  const result = db
-    .prepare('INSERT INTO growth_stages (name, sort_order, custom) VALUES (?, ?, 1)')
-    .run(name, Number(maxSort.value) + 1);
-
-  res.status(201).json({ id: result.lastInsertRowid });
-});
-
-app.delete('/api/growth-stages/:stageId', authRequired, (req, res) => {
-  db.prepare('DELETE FROM growth_stages WHERE id = ? AND custom = 1').run(req.params.stageId);
-  res.json({ ok: true });
-});
-
-app.get('/api/strategies', authRequired, (req, res) => {
-  res.json(getStrategies());
-});
-
-app.post('/api/strategies', authRequired, (req, res) => {
-  const {
-    name,
-    cropId = null,
-    growthStageId = null,
-    dailyTimes = 1,
-    startTime,
-    durationMinutes,
-    soilMoistureThreshold = null,
-    remark = ''
-  } = req.body;
-
-  if (!name || !startTime || !Number(durationMinutes)) {
-    res.status(400).json({ message: '请填写策略名称、开始时间和运行时长' });
-    return;
-  }
-
-  const result = db
-    .prepare(
-      `INSERT INTO irrigation_strategies
-       (name, crop_id, growth_stage_id, daily_times, start_time, duration_minutes, soil_moisture_threshold, remark)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      name,
-      cropId || null,
-      growthStageId || null,
-      Number(dailyTimes),
-      startTime,
-      Number(durationMinutes),
-      soilMoistureThreshold === '' ? null : soilMoistureThreshold,
-      remark
-    );
-
-  res.status(201).json({ id: result.lastInsertRowid });
-});
-
-app.delete('/api/strategies/:strategyId', authRequired, (req, res) => {
-  db.prepare('DELETE FROM irrigation_strategies WHERE id = ?').run(req.params.strategyId);
-  res.json({ ok: true });
 });
 
 app.use((err, req, res, next) => {
@@ -265,13 +249,14 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(config.apiPort, () => {
-  console.log(`PKY Cloud CN V0.2 backend listening on ${config.apiPort}`);
+  console.log(`PKY Cloud CN V0.3 backend listening on ${config.apiPort}`);
 });
 
 function listDevices() {
   return db
     .prepare(
-      `SELECT d.*, s.pump_on, s.valve_on, s.valves_json, s.flow, s.pressure, s.ec, s.ph, s.updated_at
+      `SELECT d.*, s.pump_on, s.pump1, s.pump2, s.valve_on, s.valves_json,
+              s.valves_state_json, s.flow, s.pressure, s.ec, s.ph, s.updated_at
        FROM devices d
        LEFT JOIN device_state s ON s.device_id = d.id
        ORDER BY d.created_at DESC`
@@ -283,7 +268,8 @@ function listDevices() {
 function getDevice(deviceId) {
   const row = db
     .prepare(
-      `SELECT d.*, s.pump_on, s.valve_on, s.valves_json, s.flow, s.pressure, s.ec, s.ph, s.updated_at
+      `SELECT d.*, s.pump_on, s.pump1, s.pump2, s.valve_on, s.valves_json,
+              s.valves_state_json, s.flow, s.pressure, s.ec, s.ph, s.updated_at
        FROM devices d
        LEFT JOIN device_state s ON s.device_id = d.id
        WHERE d.id = ?`
@@ -293,44 +279,39 @@ function getDevice(deviceId) {
   return row ? rowToDevice(row) : null;
 }
 
-function getPlans(deviceId) {
+function getTimerTasks(deviceId) {
   return db
     .prepare(
-      `SELECT id, device_id AS deviceId, name, enabled, start_time AS startTime,
-              duration_minutes AS durationMinutes, valve_on AS valveOn,
-              pump_on AS pumpOn, created_at AS createdAt, updated_at AS updatedAt
-       FROM irrigation_plans
+      `SELECT id, device_id AS deviceId, name, start_time AS startTime, pump,
+              valves_json AS valvesJson, duration_minutes AS durationMinutes,
+              enabled, created_at AS createdAt, updated_at AS updatedAt
+       FROM timer_tasks
        WHERE device_id = ?
        ORDER BY start_time ASC`
     )
     .all(deviceId)
-    .map((plan) => ({
-      ...plan,
-      enabled: Boolean(plan.enabled),
-      valveOn: Boolean(plan.valveOn),
-      pumpOn: Boolean(plan.pumpOn)
+    .map((row) => ({
+      ...row,
+      valves: parseJsonArray(row.valvesJson),
+      enabled: Boolean(row.enabled)
     }));
 }
 
-function getTodayStats(deviceId) {
-  const today = new Date().toISOString().slice(0, 10);
-  return (
-    db
-      .prepare(
-        `SELECT irrigation_count AS irrigationCount,
-                runtime_minutes AS runtimeMinutes,
-                water_liters AS waterLiters,
-                last_irrigation_at AS lastIrrigationAt
-         FROM daily_irrigation_stats
-         WHERE device_id = ? AND stat_date = ?`
-      )
-      .get(deviceId, today) || {
-      irrigationCount: 0,
-      runtimeMinutes: 0,
-      waterLiters: 0,
-      lastIrrigationAt: ''
-    }
-  );
+function getDevicePlans(deviceId) {
+  return db
+    .prepare(
+      `SELECT id, device_id AS deviceId, name, groups_json AS groupsJson,
+              enabled, created_at AS createdAt, updated_at AS updatedAt
+       FROM device_plans
+       WHERE device_id = ?
+       ORDER BY created_at DESC`
+    )
+    .all(deviceId)
+    .map((row) => ({
+      ...row,
+      groups: parseJsonArray(row.groupsJson),
+      enabled: Boolean(row.enabled)
+    }));
 }
 
 function getLogs(deviceId) {
@@ -339,31 +320,81 @@ function getLogs(deviceId) {
        FROM operation_logs
        WHERE device_id = ?
        ORDER BY created_at DESC
-       LIMIT 50`
+       LIMIT 80`
     : `SELECT id, device_id AS deviceId, action AS event, result, detail, source, created_at AS createdAt
        FROM operation_logs
        ORDER BY created_at DESC
-       LIMIT 50`;
-
+       LIMIT 80`;
   const statement = db.prepare(sql);
   return deviceId ? statement.all(deviceId) : statement.all();
 }
 
-function getStrategies() {
-  return db
-    .prepare(
-      `SELECT s.id, s.name, s.crop_id AS cropId, c.name AS cropName,
-              s.growth_stage_id AS growthStageId, g.name AS growthStageName,
-              s.daily_times AS dailyTimes, s.start_time AS startTime,
-              s.duration_minutes AS durationMinutes,
-              s.soil_moisture_threshold AS soilMoistureThreshold,
-              s.remark, s.created_at AS createdAt
-       FROM irrigation_strategies s
-       LEFT JOIN crops c ON c.id = s.crop_id
-       LEFT JOIN growth_stages g ON g.id = s.growth_stage_id
-       ORDER BY s.created_at DESC`
-    )
-    .all();
+function mapTimerTask(row) {
+  return {
+    name: row.name,
+    startTime: row.start_time,
+    pump: Number(row.pump),
+    valves: parseJsonArray(row.valves_json),
+    durationMinutes: Number(row.duration_minutes),
+    enabled: Boolean(row.enabled)
+  };
+}
+
+function mapDevicePlan(row) {
+  return {
+    name: row.name,
+    groups: parseJsonArray(row.groups_json),
+    enabled: Boolean(row.enabled)
+  };
+}
+
+function normalizeTimerTask(input) {
+  return {
+    name: String(input.name || '').trim(),
+    startTime: String(input.startTime || '').trim(),
+    pump: [1, 2].includes(Number(input.pump)) ? Number(input.pump) : 1,
+    valves: normalizeValveList(input.valves),
+    durationMinutes: Number(input.durationMinutes || 0),
+    enabled: input.enabled !== false
+  };
+}
+
+function normalizePlan(input) {
+  return {
+    name: String(input.name || '').trim(),
+    groups: Array.isArray(input.groups)
+      ? input.groups.map(normalizePlanGroup).filter((group) => group.groupName && group.valves.length)
+      : [],
+    enabled: input.enabled !== false
+  };
+}
+
+function normalizePlanGroup(input) {
+  return {
+    groupName: String(input.groupName || '').trim(),
+    pump: [1, 2].includes(Number(input.pump)) ? Number(input.pump) : 1,
+    valves: normalizeValveList(input.valves),
+    durationMinutes: Number(input.durationMinutes || 0)
+  };
+}
+
+function normalizeValveList(value) {
+  const list = Array.isArray(value)
+    ? value
+    : String(value || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+  return [...new Set(list.map(Number).filter((item) => item >= 1 && item <= 32))];
+}
+
+function parseJsonArray(value) {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function addLog(deviceId, action, detail, result, source) {
@@ -375,66 +406,23 @@ function addLog(deviceId, action, detail, result, source) {
 
 function startOnlineWatcher() {
   setInterval(() => {
-    const offlineBefore = new Date(Date.now() - 90 * 1000).toISOString();
+    const offlineBefore = new Date(Date.now() - 60 * 1000).toISOString();
+    const offlineDevices = db
+      .prepare(
+        `SELECT id FROM devices
+         WHERE online = 1
+           AND (last_seen_at IS NULL OR last_seen_at < ?)`
+      )
+      .all(offlineBefore);
+
     db.prepare(
       `UPDATE devices
        SET online = 0
        WHERE last_seen_at IS NULL OR last_seen_at < ?`
     ).run(offlineBefore);
-  }, 30 * 1000);
-}
 
-function startPlanScheduler() {
-  setInterval(runDuePlans, 30 * 1000);
-}
-
-function runDuePlans() {
-  const now = new Date();
-  const currentTime = now.toTimeString().slice(0, 5);
-  const currentDate = now.toISOString().slice(0, 10);
-
-  const plans = db
-    .prepare(
-      `SELECT *
-       FROM irrigation_plans
-       WHERE enabled = 1
-         AND start_time = ?
-         AND (last_run_date IS NULL OR last_run_date != ?)`
-    )
-    .all(currentTime, currentDate);
-
-  for (const plan of plans) {
-    try {
-      publishCommand(plan.device_id, {
-        type: 'timer_irrigation_start',
-        label: '灌溉计划启动',
-        planId: plan.id,
-        pumpOn: Boolean(plan.pump_on),
-        valveOn: Boolean(plan.valve_on),
-        durationMinutes: plan.duration_minutes
-      });
-
-      db.prepare(
-        `UPDATE irrigation_plans
-         SET last_run_date = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`
-      ).run(currentDate, plan.id);
-
-      setTimeout(() => {
-        try {
-          publishCommand(plan.device_id, {
-            type: 'timer_irrigation_stop',
-            label: '灌溉计划停止',
-            planId: plan.id,
-            pumpOn: false,
-            valveOn: false
-          });
-        } catch (err) {
-          console.error(`Timer stop command failed for plan ${plan.id}:`, err.message);
-        }
-      }, plan.duration_minutes * 60 * 1000);
-    } catch (err) {
-      console.error(`Timer start command failed for plan ${plan.id}:`, err.message);
+    for (const device of offlineDevices) {
+      addLog(device.id, '设备离线', '60秒内未收到 state 或 heartbeat', '离线', 'system');
     }
-  }
+  }, 10 * 1000);
 }
